@@ -1,0 +1,21 @@
+# 测试脚本（不部署到生产）
+_smoke.js
+_bbox.js
+_build_offline.js
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# Node
+node_modules/
+package-lock.json
+
+# 临时文件
+*.log
+*.tmp
