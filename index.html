@@ -54,6 +54,7 @@
 <script src="src/lib-avatar.js"></script>
 <script src="src/lib-roast.js"></script>
 <script src="src/lib-audio.js"></script>
+<script src="src/lib-bgm.js"></script>
 <script src="src/game-core.js"></script>
 <script>
 (function () {
@@ -96,6 +97,11 @@
   function sound(name, arg) {
     try { if (sfx[name]) sfx[name](arg); } catch (e) { }
   }
+  // BGM（合成循环，同样走 HTML5 audio）
+  var bgm = window.BSLib.bgm.create();
+  function setBgm(kind) {
+    try { bgm.play(kind); } catch (e) { }
+  }
 
   // ---- 输入弹窗 ----
   function hideModal() { modal.style.display = 'none'; }
@@ -134,7 +140,7 @@
   };
 
   var game = window.BossSmash.create({
-    W: W, H: H, ctx: ctx, storage: storage, sound: sound, input: input,
+    W: W, H: H, ctx: ctx, storage: storage, sound: sound, input: input, bgm: setBgm,
     vibrate: function (ms) { if (navigator.vibrate) try { navigator.vibrate(ms); } catch (e) { } },
     toast: function (m) { mtip.textContent = m; }
   });
@@ -145,17 +151,20 @@
     var t = e.touches && e.touches[0] ? e.touches[0] : (e.changedTouches && e.changedTouches[0] ? e.changedTouches[0] : e);
     return { x: (t.clientX - r.left) / scale, y: (t.clientY - r.top) / scale };
   }
-  cv.addEventListener('mousedown', function (e) { sfx.unlock(); var p = pos(e); game.pointer('down', p.x, p.y); });
+  cv.addEventListener('mousedown', function (e) { sfx.unlock(); bgm.unlock(); var p = pos(e); game.pointer('down', p.x, p.y); });
   window.addEventListener('mousemove', function (e) { var p = pos(e); game.pointer('move', p.x, p.y); });
   window.addEventListener('mouseup', function (e) { var p = pos(e); game.pointer('up', p.x, p.y); });
-  cv.addEventListener('touchstart', function (e) { e.preventDefault(); sfx.unlock(); var p = pos(e); game.pointer('down', p.x, p.y); }, { passive: false });
+  cv.addEventListener('touchstart', function (e) { e.preventDefault(); sfx.unlock(); bgm.unlock(); var p = pos(e); game.pointer('down', p.x, p.y); }, { passive: false });
   cv.addEventListener('touchmove', function (e) { e.preventDefault(); var p = pos(e); game.pointer('move', p.x, p.y); }, { passive: false });
   cv.addEventListener('touchend', function (e) { e.preventDefault(); var p = pos(e); game.pointer('up', p.x, p.y); }, { passive: false });
   cv.addEventListener('touchcancel', function (e) { game.pointer('up', -1, -1); });
   cv.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
   // 微信内置浏览器（尤其老版本 X5 内核）需要额外时机解锁音频
-  function unlockAll() { try { sfx.unlock(); } catch (e) { } }
+  function unlockAll() {
+    try { sfx.unlock(); } catch (e) { }
+    try { bgm.unlock(); } catch (e) { }
+  }
   document.addEventListener('WeixinJSBridgeReady', unlockAll, false);
   document.addEventListener('touchend', unlockAll, false);
   document.addEventListener('click', unlockAll, false);
