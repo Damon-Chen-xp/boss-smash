@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>暴打老板 · 摸鱼发泄室</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #14161f; }
+  body { display: flex; align-items: center; justify-content: center; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  #cv { display: block; touch-action: none; box-shadow: 0 0 60px rgba(0,0,0,.6); }
+  #modal {
+    position: fixed; inset: 0; display: none; align-items: flex-start; justify-content: center;
+    background: rgba(8,10,18,.72); z-index: 9; padding: 18vh 0 0; overflow: auto;
+  }
+  #box {
+    width: min(680px, 88vw); background: #FBF7F0; border-radius: 22px; padding: 28px 26px 22px;
+    box-shadow: 0 24px 60px rgba(0,0,0,.5);
+  }
+  #mtitle { font-size: 30px; font-weight: 700; color: #2F3A52; margin: 0 0 6px; }
+  #mtip { font-size: 20px; color: #8A94A3; margin: 0 0 18px; }
+  #minput {
+    width: 100%; font-size: 26px; padding: 18px 18px; border-radius: 14px; line-height: 1.4;
+    border: 2px solid #D8D2C6; background: #fff; color: #2F3A52; outline: none;
+    font-family: inherit;
+  }
+  #minput:focus { border-color: #E4572E; }
+  .row { display: flex; gap: 16px; margin-top: 20px; }
+  .row button {
+    flex: 1; border: none; border-radius: 14px; padding: 20px 0; font-size: 28px; font-weight: 700;
+    font-family: inherit; cursor: pointer; color: #fff;
+  }
+  #mok { background: #E4572E; }
+  #mcancel { background: #9AA3B0; }
+  #dice { background: #3E7D5A; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="modal">
+  <div id="box">
+    <p id="mtitle">输入</p>
+    <p id="mtip">越另类，武器越强</p>
+    <input id="minput" type="text" maxlength="40" autocomplete="off">
+    <div class="row">
+      <button id="dice">🎲 来点灵感</button>
+      <button id="mcancel">取消</button>
+      <button id="mok">确定</button>
+    </div>
+  </div>
+</div>
+
+<script src="src/lib-avatar.js"></script>
+<script src="src/lib-roast.js"></script>
+<script src="src/lib-audio.js"></script>
+<script src="src/game-core.js"></script>
+<script>
+(function () {
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+  var modal = document.getElementById('modal');
+  var mtitle = document.getElementById('mtitle');
+  var mtip = document.getElementById('mtip');
+  var minput = document.getElementById('minput');
+  var mok = document.getElementById('mok');
+  var mcancel = document.getElementById('mcancel');
+  var dice = document.getElementById('dice');
+
+  var W = 750, H = 1334, scale = 1, dpr = Math.min(window.devicePixelRatio || 1, 2);
+  var curCb = null;
+
+  function resize() {
+    var ww = window.innerWidth, wh = window.innerHeight;
+    H = Math.max(1150, Math.min(1750, Math.round(750 * wh / ww)));
+    scale = Math.min(ww / W, wh / H);
+    cv.style.width = (W * scale) + 'px';
+    cv.style.height = (H * scale) + 'px';
+    cv.width = Math.round(W * scale * dpr);
+    cv.height = Math.round(H * scale * dpr);
+    ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // ---- 音效（WebAudio 合成，无需音频文件）----
+  var AC = null;
+  function ac() {
+    if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { } }
+    if (AC && AC.state === 'suspended') AC.resume();
+    return AC;
+  }
+  // HTML5 <audio> 在微信内置浏览器 / iOS 静音键下都能响，优先用；不支持再退回 WebAudio
+  var sfx = window.BSLib.audio.createHTML();
+  if (!sfx.supported) sfx = window.BSLib.audio.create(ac);
+  function sound(name, arg) {
+    try { if (sfx[name]) sfx[name](arg); } catch (e) { }
+  }
+
+  // ---- 输入弹窗 ----
+  function hideModal() { modal.style.display = 'none'; }
+  function input(opt, cb) {
+    mtitle.textContent = opt.title || '输入';
+    mtip.textContent = opt.placeholder || '';
+    mtip.style.display = opt.title && opt.title.indexOf('吐槽') >= 0 ? 'block' : 'none';
+    minput.maxLength = opt.maxLength || 40;
+    minput.value = opt.value || '';
+    minput.placeholder = opt.placeholder || '';
+    dice.style.display = (opt.title || '').indexOf('吐槽') >= 0 ? 'block' : 'none';
+    modal.style.display = 'flex';
+    curCb = cb;
+    setTimeout(function () { minput.focus(); }, 60);
+  }
+  function submit(v) {
+    sfx.unlock();
+    var cb = curCb; curCb = null; hideModal();
+    if (cb) cb(v);
+  }
+  mok.onclick = function () { submit(minput.value); };
+  mcancel.onclick = function () { submit(null); };
+  dice.onclick = function () {
+    var t = window.BSLib.roast.tips();
+    minput.value = t[Math.floor(Math.random() * t.length)];
+  };
+  minput.onkeydown = function (e) { if (e.key === 'Enter') submit(minput.value); };
+  modal.onclick = function (e) { if (e.target === modal) submit(null); };
+
+  // ---- 存档 ----
+  var storage = {
+    get: function (k, d) {
+      try { var v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; }
+    },
+    set: function (k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { } }
+  };
+
+  var game = window.BossSmash.create({
+    W: W, H: H, ctx: ctx, storage: storage, sound: sound, input: input,
+    vibrate: function (ms) { if (navigator.vibrate) try { navigator.vibrate(ms); } catch (e) { } },
+    toast: function (m) { mtip.textContent = m; }
+  });
+
+  // ---- 指针 ----
+  function pos(e) {
+    var r = cv.getBoundingClientRect();
+    var t = e.touches && e.touches[0] ? e.touches[0] : (e.changedTouches && e.changedTouches[0] ? e.changedTouches[0] : e);
+    return { x: (t.clientX - r.left) / scale, y: (t.clientY - r.top) / scale };
+  }
+  cv.addEventListener('mousedown', function (e) { sfx.unlock(); var p = pos(e); game.pointer('down', p.x, p.y); });
+  window.addEventListener('mousemove', function (e) { var p = pos(e); game.pointer('move', p.x, p.y); });
+  window.addEventListener('mouseup', function (e) { var p = pos(e); game.pointer('up', p.x, p.y); });
+  cv.addEventListener('touchstart', function (e) { e.preventDefault(); sfx.unlock(); var p = pos(e); game.pointer('down', p.x, p.y); }, { passive: false });
+  cv.addEventListener('touchmove', function (e) { e.preventDefault(); var p = pos(e); game.pointer('move', p.x, p.y); }, { passive: false });
+  cv.addEventListener('touchend', function (e) { e.preventDefault(); var p = pos(e); game.pointer('up', p.x, p.y); }, { passive: false });
+  cv.addEventListener('touchcancel', function (e) { game.pointer('up', -1, -1); });
+  cv.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+  // 微信内置浏览器（尤其老版本 X5 内核）需要额外时机解锁音频
+  function unlockAll() { try { sfx.unlock(); } catch (e) { } }
+  document.addEventListener('WeixinJSBridgeReady', unlockAll, false);
+  document.addEventListener('touchend', unlockAll, false);
+  document.addEventListener('click', unlockAll, false);
+
+  var last = Date.now();
+  function loop() {
+    var now = Date.now();
+    var dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    game.frame(dt);
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
