@@ -61,6 +61,8 @@
     if (!S.roasts) S.roasts = [];
     if (!S.hist) S.hist = [];
     function save() { ad.storage.set('bs_save', S); }
+    var curBgm = 'menu';
+    function setBgm(kind) { curBgm = kind; if (ad.bgm) ad.bgm(S.sound === false ? 'none' : kind); }
     // 音效总开关
     function sf(name, arg) { if (S.sound !== false) ad.sound(name, arg); }
 
@@ -80,6 +82,7 @@
     var shop = { scroll: 0 }, shopFrom = 'menu';
     var roastRes = null;
     var clearData = null;
+    var failData = null;
     var pointerDown = false, lastP = { x: 0, y: 0 }, holdT = 0;
 
     // ---------- 粒子 ----------
@@ -94,6 +97,22 @@
         if (p.k == 'coin') {
           p.vx = lerp(p.vx, (p.tx - p.x) * 4, 0.14);
           p.vy = lerp(p.vy, (p.ty - p.y) * 4, 0.14);
+        }
+        if (p.k == 'weapon') {
+          p.t += dt;
+          var tt = clamp(p.t / p.dur, 0, 1);
+          var mx = (p.sx + p.tx) / 2, my = Math.min(p.sy, p.ty) - 150;
+          var u = 1 - tt;
+          p.x = u * u * p.sx + 2 * u * tt * mx + tt * tt * p.tx;
+          p.y = u * u * p.sy + 2 * u * tt * my + tt * tt * p.ty;
+          p.rot += p.vrot * dt;
+          if (tt >= 1) { st.parts.splice(i, 1); continue; }
+        }
+        if (p.k == 'file') {
+          p.x += p.vx * dt; p.y += p.vy * dt;
+          if (p.g) p.vy += p.g * dt;
+          p.rot += p.vrot * dt;
+          if (p.y > H - 40) { st.parts.splice(i, 1); playerHurt(p.dmg); continue; }
         }
       }
     }
@@ -129,6 +148,18 @@
             ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
           }
           ctx.closePath(); ctx.fill();
+        } else if (p.k == 'weapon') {
+          ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+          drawWeaponIcon(ctx, p.idx, p.crit ? 1.35 : 1);
+        } else if (p.k == 'file') {
+          ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+          ctx.fillStyle = '#FBF7F0';
+          ctx.fillRect(-22, -16, 44, 32);
+          ctx.strokeStyle = '#B4B2A9'; ctx.lineWidth = 2;
+          ctx.strokeRect(-22, -16, 44, 32);
+          ctx.strokeStyle = '#D3D1C7'; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(-14, -6); ctx.lineTo(14, -6); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(-14, 2); ctx.lineTo(10, 2); ctx.stroke();
         } else if (p.k == 'word') {
           ctx.font = f(p.size || 34, true); ctx.textAlign = 'left';
           ctx.fillStyle = p.color;
@@ -222,10 +253,14 @@
         healT: lv >= 4 ? 12 : 0,
         got: 0, hits: 0, dead: false, deadT: 0,
         buff: { mul: 1, t: 0, crit: 0, nd: false, text: '' },
-        tauntT: 3
+        tauntT: 3,
+        playerHp: 100, playerMax: 100,
+        cdAttack: lv >= 2 ? 4.5 : 0,
+        bgmKind: null
       };
       st.bt = bt;
       st.screen = 'battle';
+      setBgm('battle');
     }
     function baseDmg() {
       var lv = S.lv[S.cur] || 1;
@@ -295,6 +330,14 @@
       }
       b.got += cn; S.coins += cn;
 
+      // 武器飞行（视觉强化）：从屏幕下方甩出武器，砸向 BOSS
+      P({
+        k: 'weapon', idx: S.cur, crit: crit,
+        sx: W / 2 + (Math.random() - 0.5) * W * 0.72, sy: H + 50,
+        x: 0, y: 0, tx: b.bx + (Math.random() - 0.5) * 150, ty: b.by + (Math.random() - 0.5) * 130,
+        rot: (Math.random() - 0.5) * 1.6, vrot: 9 + Math.random() * 6, t: 0, dur: 0.28, life: 0.3
+      });
+
       // 伤痕：淤青 / 肿包 / 创可贴 / 血口子
       if (b.bruises.length < 9 && Math.random() < 0.42) {
         var r2 = Math.random();
@@ -330,6 +373,67 @@
         sf('clear');
       }
     }
+    // 玩家被反击文件命中（扣血，可能触发失败）
+    function playerHurt(dmg) {
+      var b = bt; if (!b || b.dead) return;
+      if (st.screen != 'battle') return;
+      b.playerHp -= dmg;
+      st.shake = Math.max(st.shake, 18);
+      P({ k: 'txt', x: W / 2, y: H * 0.52, vx: 0, vy: -40, text: '-' + Math.round(dmg), size: 46, color: '#FF5C4D', life: 1 });
+      sf('miss');
+      ad.vibrate(30);
+      if (b.playerHp <= 0) {
+        b.playerHp = 0;
+        failData = { lv: b.lv, dmgPct: Math.round((1 - b.boss.hp / b.boss.max) * 100), name: b.boss.name };
+        st.screen = 'fail';
+        save();
+        setBgm('none');
+      }
+    }
+
+    // 武器图标（7 种，纯几何绘制，用于飞行动画）
+    function drawWeaponIcon(ctx, idx, s) {
+      ctx.save();
+      ctx.scale(s, s);
+      ctx.lineJoin = 'round';
+      if (idx === 0) { // 祖传拖鞋
+        ctx.fillStyle = '#E4572E';
+        AV.rr(ctx, -30, -13, 60, 26, 12); ctx.fill();
+        ctx.strokeStyle = '#F0997B'; ctx.lineWidth = 5;
+        ctx.beginPath(); ctx.arc(0, -16, 15, Math.PI, 0); ctx.stroke();
+      } else if (idx === 1) { // 机械键盘
+        ctx.fillStyle = '#39435C';
+        AV.rr(ctx, -42, -19, 84, 38, 6); ctx.fill();
+        ctx.fillStyle = '#F1EFE8';
+        for (var r = 0; r < 2; r++) for (var cc = 0; cc < 6; cc++) ctx.fillRect(-38 + cc * 12, -15 + r * 10, 8, 6);
+      } else if (idx === 2) { // 养生保温杯
+        ctx.fillStyle = '#3E7D5A';
+        AV.rr(ctx, -17, -30, 34, 60, 9); ctx.fill();
+        ctx.fillStyle = '#7A5AA8'; AV.rr(ctx, -19, -37, 38, 11, 5); ctx.fill();
+        ctx.fillStyle = '#D3D1C7'; ctx.fillRect(-13, 30, 26, 8);
+      } else if (idx === 3) { // 卡纸打印机
+        ctx.fillStyle = '#888780';
+        AV.rr(ctx, -36, -26, 72, 52, 7); ctx.fill();
+        ctx.fillStyle = '#D3D1C7'; ctx.fillRect(-32, -13, 64, 7);
+        ctx.fillStyle = '#5F5E5A'; ctx.fillRect(-8, 12, 16, 12);
+      } else if (idx === 4) { // 滚烫美式
+        ctx.fillStyle = '#BA7517';
+        ctx.beginPath(); ctx.moveTo(-19, -26); ctx.lineTo(19, -26); ctx.lineTo(11, 22); ctx.lineTo(-11, 22); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#7A5AA8'; ctx.fillRect(-21, -32, 42, 8);
+      } else if (idx === 5) { // 一纸离职信
+        ctx.fillStyle = '#FBF7F0';
+        ctx.beginPath(); ctx.moveTo(0, -28); ctx.lineTo(26, -15); ctx.lineTo(0, -2); ctx.lineTo(-26, -15); ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = '#2F3A52'; ctx.lineWidth = 2; ctx.stroke();
+      } else { // 仲裁申请书
+        ctx.fillStyle = '#F1EFE8';
+        AV.rr(ctx, -24, -32, 48, 64, 4); ctx.fill();
+        ctx.fillStyle = '#E24B4A'; ctx.beginPath(); ctx.arc(0, 2, 13, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#FFF'; ctx.font = f(18, true); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('法', 0, 2);
+      }
+      ctx.restore();
+    }
+
     function doUlt() {
       if (!bt || bt.dead || bt.rage < 100) return;
       bt.rage = 0;
@@ -433,6 +537,25 @@
             save();
           }
         }
+        // BOSS 反击（第 2 关起）：周期扔文件攻击玩家
+        if (!b.dead && b.lv >= 2) {
+          b.cdAttack -= dt;
+          if (b.cdAttack <= 0) {
+            b.cdAttack = Math.max(2.6, 7 - b.lv * 0.45);
+            var fx = b.bx + (Math.random() - 0.5) * 120;
+            var fy = b.by - 50;
+            P({
+              k: 'file', x: fx, y: fy, vx: (Math.random() - 0.5) * 140, vy: 300 + b.lv * 32,
+              g: 60, rot: (Math.random() - 0.5) * 4, vrot: 7, life: 4,
+              dmg: 10 + b.lv * 3
+            });
+            b.tauntE = 0.85;
+            sf('taunt');
+          }
+        }
+        // BGM 随血量切换（BOSS 濒死换压迫版）
+        var wantBgm = b.dead ? 'none' : (pr < 0.25 ? 'boss' : 'battle');
+        if (wantBgm !== b.bgmKind) { b.bgmKind = wantBgm; setBgm(wantBgm); }
         // 长按连击
         if (pointerDown && !b.dead && st.screen == 'battle') {
           holdT -= dt;
@@ -458,6 +581,7 @@
       else if (st.screen == 'shop') { if (shopFrom == 'battle') { drawBattleBg(); drawBattleChar(); } else { drawMenuBg(); } drawShop(); }
       else if (st.screen == 'roast') { drawBattleBg(); drawBattleChar(); drawRoast(); }
       else if (st.screen == 'clear') { drawBattleBg(); drawBattleChar(); drawClear(); }
+      else if (st.screen == 'fail') { drawBattleBg(); drawBattleChar(); drawFail(); }
 
       drawParts();
       ctx.restore();
@@ -593,17 +717,25 @@
 
       // 顶部条
       ctx.save();
-      ctx.fillStyle = 'rgba(20,26,40,.55)'; ctx.fillRect(0, 0, W, 128);
-      btn('back', 20, 26, 76, 76, '✕', { size: 34, bg: '#3A4258', bg2: '#4E5B7C' });
-      btn('mute', 108, 26, 76, 76, '', { size: 32, bg: '#3A4258', bg2: '#4E5B7C', icon: 'speaker', muted: S.sound === false });
-      label('第 ' + b.lv + ' 关 · ' + b.boss.name, W / 2, 46, 32, '#FFE9C9', 'center');
-      var bw = W - 120, bx = 60, by = 72;
-      ctx.fillStyle = 'rgba(0,0,0,.4)'; AV.rr(ctx, bx, by, bw, 30, 15); ctx.fill();
+      ctx.fillStyle = 'rgba(20,26,40,.55)'; ctx.fillRect(0, 0, W, 168);
+      btn('back', 20, 22, 76, 76, '✕', { size: 34, bg: '#3A4258', bg2: '#4E5B7C' });
+      btn('mute', 108, 22, 76, 76, '', { size: 32, bg: '#3A4258', bg2: '#4E5B7C', icon: 'speaker', muted: S.sound === false });
+      label('第 ' + b.lv + ' 关 · ' + b.boss.name, W / 2, 40, 30, '#FFE9C9', 'center');
+      var bw = W - 120, bx = 60, by = 62;
+      ctx.fillStyle = 'rgba(0,0,0,.4)'; AV.rr(ctx, bx, by, bw, 26, 13); ctx.fill();
       var ratio = clamp(b.boss.hp / b.boss.max, 0, 1);
       var g = ctx.createLinearGradient(bx, 0, bx + bw, 0);
       g.addColorStop(0, '#FF5C4D'); g.addColorStop(1, '#FFB03A');
-      ctx.fillStyle = g; AV.rr(ctx, bx, by, Math.max(6, bw * ratio), 30, 15); ctx.fill();
-      label(fmt(b.boss.hp) + ' / ' + fmt(b.boss.max), W / 2, by + 15, 22, '#FFF', 'center');
+      ctx.fillStyle = g; AV.rr(ctx, bx, by, Math.max(6, bw * ratio), 26, 13); ctx.fill();
+      label(fmt(b.boss.hp) + ' / ' + fmt(b.boss.max), W / 2, by + 13, 21, '#FFF', 'center');
+      // 玩家血量条
+      var py2 = 96, pr2 = clamp(b.playerHp / b.playerMax, 0, 1);
+      ctx.fillStyle = 'rgba(0,0,0,.4)'; AV.rr(ctx, bx, py2, bw, 16, 8); ctx.fill();
+      var pg = ctx.createLinearGradient(bx, 0, bx + bw, 0);
+      pg.addColorStop(0, '#57A177'); pg.addColorStop(1, '#8FD6A6');
+      ctx.fillStyle = pg; AV.rr(ctx, bx, py2, Math.max(6, bw * pr2), 16, 8); ctx.fill();
+      ctx.fillStyle = '#FFF'; ctx.font = f(15, true); ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText('我', bx + 8, py2 + 8);
       ctx.restore();
       label('💰 ' + fmt(S.coins), W - 60, 30, 34, '#FFD24A', 'right');
 
@@ -615,9 +747,9 @@
             mr > 0.18 ? ['🥺 求饶', '#B0552E'] : ['😭 崩溃', '#A32E2E'];
       ctx.save();
       ctx.fillStyle = mood[1];
-      AV.rr(ctx, 60, 140, 168, 50, 16); ctx.fill();
-      ctx.fillStyle = '#FFF'; ctx.font = f(26, true); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(mood[0], 144, 166);
+      AV.rr(ctx, 60, 124, 168, 40, 14); ctx.fill();
+      ctx.fillStyle = '#FFF'; ctx.font = f(22, true); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(mood[0], 144, 144);
       ctx.restore();
 
       // 濒死红晕
@@ -805,6 +937,51 @@
       btn('home', px + 70 + (pw - 110) / 2, by, (pw - 110) / 2, 80, '回工位', { size: 32, bg: '#4A5268', bg2: '#646E88' });
     }
 
+    var FAIL_TAUNTS = ['就这？', '你还要加班', '明天再来吧', '周报还没写完呢', '这点本事也想躺平？', '公司没你照样转'];
+    function drawFail() {
+      ctx.save(); ctx.fillStyle = 'rgba(10,14,24,.70)'; ctx.fillRect(0, 0, W, H); ctx.restore();
+      // 屏幕裂纹
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,255,255,.14)'; ctx.lineWidth = 2;
+      for (var i = 0; i < 12; i++) {
+        var cx2 = Math.random() * W, cy2 = Math.random() * H * 0.7;
+        ctx.beginPath(); ctx.moveTo(cx2, cy2);
+        for (var j = 0; j < 3; j++) { cx2 += (Math.random() - 0.5) * 90; cy2 += Math.random() * 70; ctx.lineTo(cx2, cy2); }
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      var pw = W - 100, px = 50, ph = 560, py = H * 0.20;
+      panel(px, py, pw, ph, 28);
+      title('被 炒 了', W / 2, py + 70, 54, '#A32E2E');
+      label('「' + (failData.name || '') + '」得意地笑了', W / 2, py + 122, 27, '#7A8290', 'center');
+
+      var rows = [
+        ['本局战果', '打掉 ' + (failData.dmgPct || 0) + '% 血量'],
+        ['当前关卡', '第 ' + (failData.lv || 1) + ' 关'],
+        ['就差一点', '再试一次就过了']
+      ];
+      for (var i = 0; i < rows.length; i++) {
+        var y = py + 176 + i * 56;
+        ctx.font = f(28, false); ctx.textAlign = 'left'; ctx.fillStyle = '#4A5268';
+        ctx.fillText(rows[i][0], px + 64, y);
+        ctx.textAlign = 'right'; ctx.font = f(30, true); ctx.fillStyle = '#2F3A52';
+        ctx.fillText(rows[i][1], px + pw - 64, y);
+      }
+
+      // BOSS 嘲讽
+      ctx.save();
+      ctx.fillStyle = 'rgba(255,92,77,.12)';
+      AV.rr(ctx, px + 30, py + 344, pw - 60, 76, 14); ctx.fill();
+      ctx.fillStyle = '#B7472A'; ctx.font = f(28, true); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('BOSS：「' + (failData.taunt || pick(FAIL_TAUNTS)) + '」', W / 2, py + 382);
+      ctx.restore();
+
+      var by = py + ph - 92;
+      btn('retry', px + 40, by, (pw - 110) / 2, 78, '再来一次', { primary: true, size: 32 });
+      btn('failhome', px + 70 + (pw - 110) / 2, by, (pw - 110) / 2, 78, '回工位', { size: 32, bg: '#4A5268', bg2: '#646E88' });
+    }
+
     function drawHelp() {
       ctx.save(); ctx.fillStyle = 'rgba(10,14,24,.72)'; ctx.fillRect(0, 0, W, H); ctx.restore();
       var pw = W - 80, px = 40, ph = H * 0.72, py = H * 0.14;
@@ -843,6 +1020,13 @@
       }
       return null;
     }
+    function hitFileAt(x, y) {
+      for (var i = st.parts.length - 1; i >= 0; i--) {
+        var p = st.parts[i];
+        if (p.k == 'file' && Math.abs(p.x - x) < 74 && Math.abs(p.y - y) < 74) return p;
+      }
+      return null;
+    }
     function pointer(type, x, y) {
       if (st.help) {
         if (type == 'down') { var h = hitId(x, y); if (h && h.id == 'hclose') { st.help = false; sf('tap'); } }
@@ -854,6 +1038,16 @@
         if (b) { st.pressed = b.id; sf('tap'); return; }
         // 场景点击
         if (st.screen == 'battle' && bt && !bt.dead) {
+          // 优先格挡反击文件
+          var hf = hitFileAt(x, y);
+          if (hf) {
+            hf.life = 0;
+            P({ k: 'txt', x: hf.x, y: hf.y, vx: 0, vy: -90, text: '挡！', size: 38, color: '#7BE08A', life: 0.7 });
+            bt.combo++; bt.comboT = 2.6; bt.hits++;
+            if (bt.combo > bt.maxCombo) bt.maxCombo = bt.combo;
+            sf('coin');
+            return;
+          }
           pointerDown = true; lastP = { x: x, y: y }; holdT = 0.22;
           doHit(x, y, 'tap');
         }
@@ -877,8 +1071,8 @@
       else if (id == 'create') { crt.cfg = JSON.parse(JSON.stringify(S.cfg)); crt.cat = 0; st.screen = 'create'; }
       else if (id == 'shop') { shopFrom = 'menu'; st.screen = 'shop'; }
       else if (id == 'help') { st.help = true; }
-      else if (id == 'back') { save(); st.screen = 'menu'; }
-      else if (id == 'mute') { S.sound = S.sound === false; save(); sf('tap'); return; }
+      else if (id == 'back') { save(); st.screen = 'menu'; setBgm('menu'); }
+      else if (id == 'mute') { S.sound = S.sound === false; save(); sf('tap'); setBgm(curBgm); return; }
       else if (id == 'prev' || id == 'next') {
         var key = AV.KEYS[crt.cat], opts = AV.PARTS[key].opts, idx = 0;
         for (var i = 0; i < opts.length; i++) if (opts[i].id === crt.cfg[key]) idx = i;
@@ -907,14 +1101,18 @@
           S.coins -= WEAPONS[wi].cost; S.own[wi] = true; S.lv[wi] = 1; S.cur = wi; sf('buy');
         } else if (ad.toast) ad.toast('金币不够，再打一会儿');
         save();
-      } else if (id == 'shop2') { shopFrom = 'battle'; st.screen = 'shop'; return; }
-      else if (id == 'close') { st.screen = shopFrom == 'battle' ? 'battle' : 'menu'; return; }
+      }       else if (id == 'shop2') { shopFrom = 'battle'; st.screen = 'shop'; return; }
+      else if (id == 'close') { st.screen = shopFrom == 'battle' ? 'battle' : 'menu'; if (shopFrom != 'battle') setBgm('menu'); return; }
       else if (id == 'roast') { askRoast(); return; }
       else if (id == 'ult') { doUlt(); return; }
       else if (id == 'rok') { st.screen = 'battle'; return; }
       else if (id == 'nextlv') { startBattle(clearData.lv + 1); return; }
-      else if (id == 'home') { st.screen = 'menu'; return; }
+      else if (id == 'home') { st.screen = 'menu'; setBgm('menu'); return; }
+      else if (id == 'retry') { startBattle(failData.lv); return; }
+      else if (id == 'failhome') { st.screen = 'menu'; setBgm('menu'); return; }
     }
+
+    setBgm('menu');
 
     return {
       frame: function (dt) { update(dt); draw(); },
